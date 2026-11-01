@@ -14,13 +14,39 @@ Builds for every push are on the [Actions](../../actions) page, and tagged versi
 | `lagrelay-linux-x64.tar.gz` | Selects games by network | Bridge and exit |
 | `lagrelay-linux-arm64.tar.gz` | Selects games by network | Bridge and exit |
 
+## Install a relay on a server
+
+Run this on a Linux x64 or arm64 server. It downloads the latest release, verifies its checksum, creates the relay's key and access token, opens the firewall, and starts it as a service:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/haouarihk/lagrelay/main/install.sh | sudo bash
+```
+
+Run the same command again later to upgrade; your config and keys are kept. To pass options, put them after `sudo bash -s --`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/haouarihk/lagrelay/main/install.sh | sudo bash -s -- --name paris --client 'YOUR_PC_KEY'
+```
+
+| Option | Effect |
+|---|---|
+| `--name NAME` | Relay name shown to clients (default: the hostname) |
+| `--public-addr ADDR` | Address clients connect to (default: the detected public IP) |
+| `--port PORT` | UDP port (default: 41820) |
+| `--bridge` | Only forward traffic, instead of also being an internet exit |
+| `--client KEY` | Authorize a client's public key, from `lagrelay key` |
+| `--client-name NAME` | Name for that client (default: `my-pc`) |
+| `--version TAG` | Install a specific release (default: latest) |
+| `--uninstall` | Remove the service and binary; add `--purge` to also delete the config and keys |
+
+The installer never prints the access token. Get the client link with `sudo lagrelayd link` and keep it private.
+
 ## Quick start
 
 **1. Set up a relay** on a Linux VPS close to the game servers:
 
 ```bash
-tar xzf lagrelay-linux-x64.tar.gz && cd lagrelay-linux-x64
-sudo ./install-relay.sh --name tokyo --public-addr 203.0.113.5 --exit
+curl -fsSL https://raw.githubusercontent.com/haouarihk/lagrelay/main/install.sh | sudo bash
 ```
 
 Open UDP port 41820 in your provider's firewall.
@@ -91,6 +117,7 @@ lagrelay diag compare 203.0.113.50:27015
 | Command | What it does |
 |---|---|
 | `optimize cs2` / `faceit` | Everything above, in one command |
+| `off` | Stop routing through relays and go back to your normal connection, from any terminal (also `stop` or `disable`) |
 | `key` | Print this PC's public key |
 | `relay add` / `list` / `rm` | Manage relays |
 | `game add NAME --process x.exe` | Add any other game |

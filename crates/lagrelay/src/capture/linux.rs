@@ -57,33 +57,59 @@ fn iptables(op: &str, r: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn delete_rules(pref: &str) {
+fn delete_rules(pref: &str) -> usize {
     // `ip rule del` removes one match at a time; stop as soon as none are left.
-    while ip(&["rule", "del", "pref", pref]).is_ok() {}
+    let mut n = 0;
+    while n < 4096 && ip(&["rule", "del", "pref", pref]).is_ok() {
+        n += 1;
+    }
+    n
 }
 
-fn cleanup_all(vip: Option<Ipv4Addr>) {
+/// Turns a line of `iptables -S` into the arguments that delete it, if it's ours.
+pub fn delete_args(line: &str) -> Option<Vec<String>> {
+    let rest = line.strip_prefix("-A ")?;
+    if !rest.split_whitespace().any(|w| w == DEV) {
+        return None;
+    }
+    Some(std::iter::once("-D".to_string()).chain(rest.split_whitespace().map(str::to_string)).collect())
+}
+
+fn delete_iptables_rules() -> usize {
+    let mut n = 0;
+    for table in ["raw", "nat", "mangle", "filter"] {
+        let Ok(o) = Command::new("iptables").args(["-t", table, "-S"]).output() else { continue };
+        for line in String::from_utf8_lossy(&o.stdout).lines() {
+            if let Some(args) = delete_args(line) {
+                let mut cmd = Command::new("iptables");
+                cmd.args(["-t", table]).args(&args);
+                if cmd.output().is_ok_and(|x| x.status.success()) {
+                    n += 1;
+                }
+            }
+        }
+    }
+    n
+}
+
+/// Removes every trace of the tunnel's routing, including what a crash left behind.
+/// Returns how many items were removed.
+pub fn cleanup_all() -> usize {
+    let mut n = 0;
     for p in [PREF_EXEMPT, PREF_DIRECT, PREF_GAME] {
-        delete_rules(p);
+        n += delete_rules(p);
     }
     let _ = ip(&["route", "flush", "table", TABLE]);
     // Deleting the device also removes anything still pointing at it.
-    let _ = ip(&["link", "del", DEV]);
-    if let Some(v) = vip {
-        for r in move_rules(v) {
-            let _ = iptables("-D", &r);
-        }
-    }
+    n += ip(&["link", "del", DEV]).is_ok() as usize;
+    n + delete_iptables_rules()
 }
 
-struct Cleanup {
-    vip: Ipv4Addr,
-    nat: bool,
-}
+struct Cleanup;
 
 impl Drop for Cleanup {
     fn drop(&mut self) {
-        cleanup_all(self.nat.then_some(self.vip));
+        cleanup_all();
     }
 }
 
@@ -108,9 +134,9 @@ pub async fn start(p: CaptureParams) -> Result<Capture> {
     if p.matcher.cidrs.is_empty() {
         bail!("on Linux a game profile needs at least one CIDR (lagrelay game add NAME --cidr 1.2.3.0/24)");
     }
-    cleanup_all(None);
+    cleanup_all();
     let tun = Arc::new(Tun::create(DEV)?);
-    let cleanup = Cleanup { vip: p.vip, nat: p.auto_direct };
+    let cleanup = Cleanup;
     ip(&["addr", "add", &format!("{}/32", p.vip), "dev", DEV])?;
     ip(&["link", "set", DEV, "up", "mtu", &lagcore::TUNNEL_MTU.to_string()])?;
     ip(&["route", "replace", "default", "dev", DEV, "table", TABLE])?;
@@ -192,4 +218,19 @@ pub async fn start(p: CaptureParams) -> Result<Capture> {
         }
     });
     Ok(Capture { outbound: out_rx, inbound: in_tx, guard: Box::new(cleanup), apply, description: format!("TUN {DEV}, routes by CIDR") })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_our_firewall_rules_are_deleted() {
+        let a = delete_args("-A POSTROUTING -s 10.77.0.2/32 ! -o lagrelay-c0 -j MASQUERADE").unwrap();
+        assert_eq!(a.join(" "), "-D POSTROUTING -s 10.77.0.2/32 ! -o lagrelay-c0 -j MASQUERADE");
+        assert!(delete_args("-A POSTROUTING -s 10.0.1.0/24 ! -o docker0 -j MASQUERADE").is_none());
+        assert!(delete_args("-A POSTROUTING -o lagrelay-c0x -j MASQUERADE").is_none(), "a similar name isn't ours");
+        assert!(delete_args("-P POSTROUTING ACCEPT").is_none());
+        assert!(delete_args("-N lagrelay-c0").is_none(), "only rules, never chains");
+    }
 }

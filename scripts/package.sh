@@ -19,8 +19,9 @@ W=dist/.cache/WinDivert-$WD_VER-A
 cp target/x86_64-pc-windows-gnu/release/lagrelay.exe target/x86_64-pc-windows-gnu/release/lagrelayd.exe "$W/x64/WinDivert.dll" "$W/x64/WinDivert64.sys" dist/lagrelay-windows-x64/
 cp "$W/LICENSE" dist/lagrelay-windows-x64/WinDivert-LICENSE.txt
 cp README.md dist/lagrelay-windows-x64/
-cp target/x86_64-unknown-linux-musl/release/lagrelay target/x86_64-unknown-linux-musl/release/lagrelayd deploy/install-relay.sh deploy/lagrelayd.service README.md dist/lagrelay-linux-x64/
-cp target/aarch64-unknown-linux-musl/release/lagrelay target/aarch64-unknown-linux-musl/release/lagrelayd deploy/install-relay.sh deploy/lagrelayd.service README.md dist/lagrelay-linux-arm64/
+cp target/x86_64-unknown-linux-musl/release/lagrelay target/x86_64-unknown-linux-musl/release/lagrelayd install.sh README.md dist/lagrelay-linux-x64/
+cp target/aarch64-unknown-linux-musl/release/lagrelay target/aarch64-unknown-linux-musl/release/lagrelayd install.sh README.md dist/lagrelay-linux-arm64/
 (cd dist && tar czf lagrelay-linux-arm64.tar.gz lagrelay-linux-arm64 && rm -f lagrelay-windows-x64.zip && python3 -m zipfile -c lagrelay-windows-x64.zip lagrelay-windows-x64/ && tar czf lagrelay-linux-x64.tar.gz lagrelay-linux-x64)
+cp install.sh dist/install.sh
 (cd dist && sha256sum lagrelay-windows-x64.zip lagrelay-linux-x64.tar.gz lagrelay-linux-arm64.tar.gz > SHA256SUMS.txt)
 ls -la dist/*.zip dist/*.tar.gz

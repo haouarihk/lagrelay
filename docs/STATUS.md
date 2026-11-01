@@ -4,9 +4,9 @@
 
 | Area | How | Result |
 |---|---|---|
-| Protocol, packet handling, routing logic, parsers | Unit tests on Linux | 104 pass |
+| Protocol, packet handling, routing logic, parsers | Unit tests on Linux | 107 pass |
 | Same core and client tests on a Windows build | Run under Wine (Debian trixie) | 85 pass |
-| Relay, multipath and Linux capture | `tests/e2e/run.sh`: real TUN devices, NAT and netem on isolated Docker networks | 44 of 44 checks pass |
+| Relay, multipath and Linux capture | `tests/e2e/run.sh`: real TUN devices, NAT and netem on isolated Docker networks | 54 of 54 checks pass |
 | Windows capture filter | Compiled by the real `WinDivert.dll` | Accepted |
 | Windows binary | Under Wine: version, key, relay and game commands, doctor, and `optimize --tweaks-only` | Works, and imports only standard Windows DLLs |
 | Tweak undo order | Apply and revert under Wine for Game Bar, QoS and priority | Restored |
@@ -51,7 +51,7 @@ The same server measured 46-65 ms depending only on the UDP source port, and eac
 - **FACEIT Anti-Cheat with WinDivert.** Unknown. It may refuse to run alongside the driver.
 - **Real Windows tool behaviour.** Under Wine, `powercfg` is missing and PowerShell is a stub, so these are unproven: the power plan, core parking, SysMain, NetQos policies, DNS changes, the traffic shaper and the RAM cleaner.
 - **Real internet paths.** Flow search picked faster flows on your live route, but switching routes during real congestion has only been tested with artificial delay and loss.
-- **`deploy/install-relay.sh`.** The Oracle relay was installed by hand with the same steps. The systemd unit itself has run there.
+- **`install.sh` on a real VPS.** It has been tested in containers, with `systemctl` simulated, but not on a real server with systemd.
 - **Linux tweaks and shaping** (`tc cake`, `resolvectl`, CPU governor).
 
 ## First run on Windows

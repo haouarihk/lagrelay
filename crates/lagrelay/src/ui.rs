@@ -7,7 +7,7 @@ use crossterm::ExecutableCommand;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Sparkline, Table};
 use std::collections::VecDeque;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 pub fn fmt_bytes(b: u64) -> String {
@@ -62,7 +62,7 @@ impl Drop for Restore {
 }
 
 /// Runs the dashboard until the user quits. Blocking; call via spawn_blocking.
-pub fn dashboard(live: &Live) -> Result<()> {
+pub fn dashboard(live: &Live, stop: &AtomicBool) -> Result<()> {
     enable_raw_mode()?;
     std::io::stdout().execute(EnterAlternateScreen)?;
     let _restore = Restore;
@@ -72,6 +72,9 @@ pub fn dashboard(live: &Live) -> Result<()> {
     let (mut rate_up, mut rate_down) = (0.0f64, 0.0f64);
     let mut tick = Instant::now();
     loop {
+        if stop.load(Ordering::Relaxed) {
+            return Ok(());
+        }
         if tick.elapsed() >= Duration::from_millis(500) {
             tick = Instant::now();
             let s = live.snapshot.lock().unwrap().clone();
@@ -142,7 +145,7 @@ pub fn dashboard(live: &Live) -> Result<()> {
                 .header(Row::new(["server", "using", "direct", "relay", "new connections"]).style(Style::default().add_modifier(Modifier::BOLD)))
                 .block(Block::default().title(" Game servers: direct or relay ").borders(Borders::ALL));
             f.render_widget(table, areas[3]);
-            f.render_widget(Paragraph::new(" q quit   + more routes   - fewer routes").style(Style::default().fg(Color::DarkGray)), areas[4]);
+            f.render_widget(Paragraph::new(" q quit (or run: lagrelay off)   + more routes   - fewer routes").style(Style::default().fg(Color::DarkGray)), areas[4]);
         })?;
         if event::poll(Duration::from_millis(200))? {
             if let Event::Key(k) = event::read()? {

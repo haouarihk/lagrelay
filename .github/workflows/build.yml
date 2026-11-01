@@ -87,6 +87,11 @@ jobs:
           name: checksums
           path: dist/SHA256SUMS.txt
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          path: dist/install.sh
+          if-no-files-found: error
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -104,4 +109,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" out/* --title "$TAG" --generate-notes
+        run: |
+          cat > notes.md <<NOTES
+          ## Install a relay on a server
+
+          Run this on a Linux x64 or arm64 server. It downloads this version, checks its
+          checksum, and starts the relay as a service:
+
+          \`\`\`bash
+          curl -fsSL https://github.com/$GH_REPO/releases/download/$TAG/install.sh | sudo bash -s -- --version $TAG
+          \`\`\`
+
+          Add \`--bridge\` for a relay that only forwards traffic. See the
+          [README](https://github.com/$GH_REPO#install-a-relay-on-a-server) for all options.
+
+          ## Install the client
+
+          Download the archive for your system below. Each one holds \`lagrelay\` (client) and \`lagrelayd\` (relay).
+
+          NOTES
+          gh release create "$TAG" out/* --title "$TAG" --notes-file notes.md --generate-notes

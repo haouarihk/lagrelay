@@ -6,6 +6,12 @@
 #
 # Usage: tests/e2e/run.sh [path to static binaries]
 set -u
+# Runs share container names, so a second one would destroy the first one's containers.
+exec 9>"${TMPDIR:-/tmp}/lagrelay-e2e.lock"
+flock -n 9 || { echo "another end-to-end run is in progress" >&2; exit 2; }
+# Runs share container names and subnets, so a second run would break the first.
+exec 9>"${TMPDIR:-/tmp}/lagrelay-e2e.lock"
+flock -n 9 || { echo "another e2e run is in progress" >&2; exit 3; }
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 BIN=${1:-$ROOT/target/x86_64-unknown-linux-musl/release}
 P=lagrelay-e2e
@@ -214,6 +220,26 @@ stop_client
 LEFT=$(x client sh -c "iptables-save 2>/dev/null | grep -c lagrelay-c0")
 check "no firewall rules left after quitting" "$LEFT" "0"
 docker network disconnect $P-c $P-client
+
+# `lagrelay off`: from another terminal, while running, and after a crash.
+connect --routes 1 --flows 4 --no-direct; wait_up >/dev/null
+OUT=$(x client lagrelay off 2>&1)
+case "$OUT" in *"LagRelay stopped"*) ok "off stops a running session";; *) bad "off stops a running session" "$OUT";; esac
+check "off leaves no process behind" "$(x client sh -c 'pgrep -x lagrelay | wc -l')" "0"
+x client tail -2 /tmp/client.log | grep -q "session: testgame" && ok "off lets the session exit cleanly" || bad "off lets the session exit cleanly" "$(x client tail -2 /tmp/client.log)"
+check "traffic isn't tunnelled after off" "$(x client python3 /e2e/probe.py echo)" "no-reply"
+OUT=$(x client lagrelay off 2>&1)
+case "$OUT" in *"isn't running"*) ok "off is safe when nothing is running";; *) bad "off is safe when nothing is running" "$OUT";; esac
+
+connect --routes 1 --flows 4; wait_up >/dev/null
+OUT=$(x client lagrelay connect testgame --plain 2>&1)
+case "$OUT" in *"already running"*) ok "a second session is refused";; *) bad "a second session is refused" "$OUT";; esac
+x client pkill -KILL -x lagrelay; sleep 1
+check "a crash leaves routing behind (test setup)" "$(x client sh -c 'ip rule | grep -cE "^7[567]00:" | grep -qv "^0$" && echo yes || echo no')" "yes"
+OUT=$(x client lagrelay off 2>&1)
+case "$OUT" in *"left routing behind"*) ok "off clears routing left by a crash";; *) bad "off clears routing left by a crash" "$OUT";; esac
+check "no rules left after off" "$(x client sh -c 'ip rule | grep -cE "^7[567]00:"')" "0"
+check "no firewall rules left after off" "$(x client sh -c 'iptables-save 2>/dev/null | grep -c lagrelay-c0')" "0"
 
 # Security: a client whose key isn't authorized gets nothing.
 x client2 lagrelay relay add "$(x exit lagrelayd link | sed 's/172.30.2.20/172.30.1.11/')" >/dev/null

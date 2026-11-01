@@ -109,6 +109,18 @@ pub struct Capture {
     pub description: String,
 }
 
+/// Clears routing left by a crash. On Windows, closing the process releases everything.
+pub fn cleanup_leftovers() -> usize {
+    #[cfg(target_os = "linux")]
+    {
+        linux::cleanup_all()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        0
+    }
+}
+
 #[cfg(windows)]
 pub async fn start(p: CaptureParams) -> Result<Capture> {
     windows::start(p)

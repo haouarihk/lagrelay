@@ -5,6 +5,7 @@ mod diag;
 mod direct;
 mod dns;
 mod engine;
+mod instance;
 mod presets;
 mod rules;
 mod session;
@@ -52,6 +53,9 @@ enum Cmd {
         #[arg(long)]
         plain: bool,
     },
+    /// Stop routing through relays. Traffic goes back to your normal connection
+    #[command(visible_alias = "stop", visible_alias = "disable")]
+    Off,
     /// Print this client's public key, to authorize it on your relays
     Key,
     /// Manage relays
@@ -229,6 +233,7 @@ async fn main() -> Result<()> {
             let Some(preset) = preset else { bail!("say which: lagrelay optimize cs2  or  lagrelay optimize faceit") };
             optimize(&preset, exit, tweaks_only, dns, keep, plain).await
         }
+        Cmd::Off => off(),
         Cmd::Key => {
             let c = Config::load_or_create()?;
             println!("{}", encode_key(&public_from_private(&c.private()?)?));
@@ -238,6 +243,7 @@ async fn main() -> Result<()> {
         Cmd::Relay { cmd } => relay_cmd(cmd),
         Cmd::Game { cmd } => game_cmd(cmd),
         Cmd::Connect { game, exit, routes, multi_internet, max_bridges, flows, no_direct, live_switch, plain } => {
+            let _session = instance::begin_session()?;
             let c = Config::load_or_create()?;
             let g = c.game(&game)?.clone();
             let live = session::start(c, g, ConnectOpts { exit, routes, multi_internet, max_bridges, flows, no_direct, live_switch }).await?;
@@ -310,6 +316,7 @@ async fn main() -> Result<()> {
 /// `lagrelay optimize`: tune the PC, connect, show the dashboard, restore on quit.
 async fn optimize(preset: &str, exit: Option<String>, tweaks_only: bool, use_dns: bool, keep: bool, plain: bool) -> Result<()> {
     let p = presets::find(preset)?;
+    let _session = instance::begin_session()?;
     println!("Optimizing for {}", p.title);
     for n in p.notes {
         println!("note: {n}");
@@ -368,8 +375,8 @@ async fn optimize(preset: &str, exit: Option<String>, tweaks_only: bool, use_dns
         }
     }
     if !connected {
-        println!("\nPress Ctrl+C when you've finished playing.");
-        tokio::signal::ctrl_c().await.context("wait for Ctrl+C")?;
+        println!("\nPress Ctrl+C when you've finished playing, or run: lagrelay off");
+        wait_for_shutdown_signal().await?;
     }
     drop(timer);
     if keep {
@@ -401,7 +408,15 @@ async fn supervise(started: (Live, tokio::task::JoinHandle<Result<session::Repor
         printer.abort();
     } else {
         let l2 = live.clone();
-        tokio::task::spawn_blocking(move || ui::dashboard(&l2)).await??;
+        // Set by `lagrelay off` or a signal: raw mode means no Ctrl+C reaches us here.
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (s2, s3) = (stop.clone(), stop.clone());
+        let watcher = tokio::spawn(async move {
+            let _ = wait_for_shutdown_signal().await;
+            s2.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        tokio::task::spawn_blocking(move || ui::dashboard(&l2, &s3)).await??;
+        watcher.abort();
     }
     let _ = live.stop.send(true);
     let report = handle.await??;
@@ -418,17 +433,51 @@ async fn supervise(started: (Live, tokio::task::JoinHandle<Result<session::Repor
     session::save_report(&report)
 }
 
+/// Returns on Ctrl+C, a termination signal, or a request from `lagrelay off`.
 async fn wait_for_shutdown_signal() -> Result<()> {
+    let off = async {
+        let mut t = tokio::time::interval(Duration::from_millis(300));
+        loop {
+            t.tick().await;
+            if instance::stop_requested() {
+                return;
+            }
+        }
+    };
     #[cfg(unix)]
     {
         let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
         tokio::select! {
             r = tokio::signal::ctrl_c() => r?,
             _ = term.recv() => {}
+            _ = off => {}
         }
     }
     #[cfg(not(unix))]
-    tokio::signal::ctrl_c().await?;
+    tokio::select! {
+        r = tokio::signal::ctrl_c() => r?,
+        _ = off => {}
+    }
+    Ok(())
+}
+
+/// `lagrelay off`: stops the session, and clears anything a crash left behind.
+fn off() -> Result<()> {
+    if cfg!(target_os = "linux") && !system::is_elevated() {
+        bail!("this needs root: sudo lagrelay off");
+    }
+    let r = instance::stop_session()?;
+    let leftovers = capture::cleanup_leftovers();
+    match (r.was_running, r.forced) {
+        (true, false) => println!("LagRelay stopped. Your traffic is back on your normal connection."),
+        (true, true) => println!("LagRelay didn't respond, so it was force-stopped. Your traffic is back on your normal connection."),
+        (false, _) if leftovers > 0 => println!("LagRelay wasn't running, but a previous session left routing behind. It's cleared, and your traffic is back on your normal connection."),
+        (false, _) => println!("LagRelay isn't running. Your traffic is already on your normal connection."),
+    }
+    // A clean exit restored these. A crash or a force-stop can't have.
+    if !boost::load_state().applied.is_empty() {
+        println!("PC tweaks are still applied. To undo them: lagrelay optimize --revert");
+    }
     Ok(())
 }
 
