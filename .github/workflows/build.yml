@@ -1,0 +1,107 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RUST_VERSION: "1.90.0"
+  ZIG_VERSION: "0.17.0"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: test-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+      - run: cargo test --workspace --locked
+
+  package:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Rust and targets
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+          rustup target add x86_64-pc-windows-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+      - name: Install zig and cargo-zigbuild
+        run: pip install "ziglang==$ZIG_VERSION" cargo-zigbuild
+      - name: Make zig available
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          printf '#!/bin/sh\nexec python -m ziglang "$@"\n' > "$HOME/.local/bin/zig"
+          chmod +x "$HOME/.local/bin/zig"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: package-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+      - name: Build all binaries and archives
+        run: scripts/package.sh
+      - name: Check the binaries are for the right platforms
+        run: |
+          file dist/lagrelay-windows-x64/lagrelay.exe dist/lagrelay-windows-x64/lagrelayd.exe | grep -c 'x86-64' | grep -qx 2
+          file dist/lagrelay-linux-x64/lagrelay dist/lagrelay-linux-x64/lagrelayd | grep -c 'x86-64' | grep -qx 2
+          file dist/lagrelay-linux-arm64/lagrelay dist/lagrelay-linux-arm64/lagrelayd | grep -c 'ARM aarch64' | grep -qx 2
+          dist/lagrelay-linux-x64/lagrelay --version
+          dist/lagrelay-linux-x64/lagrelayd --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lagrelay-windows-x64
+          path: dist/lagrelay-windows-x64.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lagrelay-linux-x64
+          path: dist/lagrelay-linux-x64.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lagrelay-linux-arm64
+          path: dist/lagrelay-linux-arm64.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: checksums
+          path: dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" out/* --title "$TAG" --generate-notes

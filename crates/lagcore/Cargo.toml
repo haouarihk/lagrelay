@@ -1,0 +1,15 @@
+[package]
+name = "lagcore"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+rand.workspace = true
+snow.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
+tokio.workspace = true

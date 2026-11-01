@@ -1,0 +1,17 @@
+[Unit]
+Description=LagRelay relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/lagrelayd run
+Restart=always
+RestartSec=2
+# Needs root for TUN, routes and NAT when acting as an exit.
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
